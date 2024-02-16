@@ -2,7 +2,7 @@ from torch_geometric.datasets import TUDataset
 from torch_geometric.loader import DataLoader
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool, NNConv, GATConv, SAGEConv, GINConv, global_max_pool, global_add_pool
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv, GINConv, global_mean_pool, global_max_pool, global_add_pool
 from tqdm import tqdm, trange
 from torcheval.metrics.aggregation.auc import AUC
 import wandb
@@ -13,57 +13,12 @@ torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 
 def load_embeddings():
+    # for loading glove embeddings
     embeddings = np.load('./data/embeddings.npy')
     return embeddings
 
-class GNN(torch.nn.Module):
-    def __init__(self, hidden_channels=16):
-        super().__init__()
-        self.lin1 = torch.nn.Sequential(
-            torch.nn.Linear(1, hidden_channels),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_channels, hidden_channels* hidden_channels)
-        )
-        self.lin2 = torch.nn.Sequential(
-            torch.nn.Linear(1, hidden_channels),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_channels, hidden_channels * hidden_channels)
-        )
-        self.lin3 = torch.nn.Sequential(
-            torch.nn.Linear(1, hidden_channels),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_channels, hidden_channels * dataset.num_classes)
-        )
-        self.conv1 = NNConv(hidden_channels, hidden_channels, self.lin1, aggr='mean')
-        self.conv2 = NNConv(hidden_channels, hidden_channels, self.lin2, aggr='mean')
-        self.conv3 = NNConv(hidden_channels, hidden_channels, self.lin3, aggr='mean')
-        self.embedding = torch.nn.Embedding(dataset.num_node_features, hidden_channels)
-        self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(hidden_channels, hidden_channels),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_channels, dataset.num_classes)
-        )
-    
-    def forward(self, data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        edge_attr = data.edge_attr.view(-1, 1)
-        # normalize edge_attr
-        # edge_attr = (edge_attr - edge_attr.mean()) / edge_attr.std()
-        # turn x from one-hot to continuous
-        x = x.argmax(dim=1)
-        x = self.embedding(x)
-        x = self.conv1(x, edge_index, edge_attr)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training, p=0.1)
-        x = self.conv2(x, edge_index, edge_attr)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training, p=0.1)
-        x = self.conv3(x, edge_index, edge_attr)
-        x = global_add_pool(x, batch)
-        x = self.mlp(x)
-        return x
-    
 class GAT(torch.nn.Module):
+    """Graph Attention Network"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         embed_dim = 50
@@ -72,6 +27,7 @@ class GAT(torch.nn.Module):
             self.conv1 = GATConv(embed_dim, hidden_channels, normalize=normalize)
             embed = load_embeddings()
             self.embedding.weight.data.copy_(torch.from_numpy(embed))
+            self.embedding.weight.requires_grad = False
         else:
             self.conv1 = GATConv(dataset.num_node_features, hidden_channels, normalize=normalize)
         self.conv2 = GATConv(hidden_channels, hidden_channels, normalize=normalize)
@@ -100,6 +56,8 @@ class GAT(torch.nn.Module):
         return x
     
 class GAT_layer2(torch.nn.Module):
+    """Graph Attention Network"""
+    """2 layers"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         if use_embedding:
@@ -129,6 +87,7 @@ class GAT_layer2(torch.nn.Module):
         return x
     
 class GCN(torch.nn.Module):
+    """Graph Convolutional Network"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         embed_dim = 50
@@ -166,6 +125,8 @@ class GCN(torch.nn.Module):
         return x
     
 class GCN_l4(torch.nn.Module):
+    """Graph Convolutional Network"""
+    """4 layers"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         embed_dim = 50
@@ -207,6 +168,8 @@ class GCN_l4(torch.nn.Module):
         return x
     
 class GCN_l5(torch.nn.Module):
+    """Graph Convolutional Network"""
+    """5 layers"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         embed_dim = 50
@@ -252,6 +215,7 @@ class GCN_l5(torch.nn.Module):
         return x
     
 class GIN(torch.nn.Module):
+    """Graph Isomorphism Network"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         embed_dim = 50
@@ -305,6 +269,7 @@ class GIN(torch.nn.Module):
         return x
     
 class SAGE(torch.nn.Module):
+    """GraphSAGE"""
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         if use_embedding:
@@ -389,11 +354,11 @@ if __name__ == '__main__':
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
-    hidden_channels = 32 #64 #256
+    hidden_channels = 32
     dropout = 0.1
-    embed = False #True
+    embed = False
     normalize = True
-    model = GIN(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed, normalize=normalize).to(device)
+    model = GAT(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed, normalize=normalize).to(device)
     lr = 0.003
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
