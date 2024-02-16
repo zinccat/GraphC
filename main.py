@@ -3,7 +3,6 @@ from torch_geometric.loader import DataLoader
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool, NNConv, GATConv, SAGEConv
-# from torch_geometric.nn.models import GATConv
 from tqdm import tqdm, trange
 from torcheval.metrics.aggregation.auc import AUC
 import wandb
@@ -82,15 +81,15 @@ class GAT(torch.nn.Module):
         return F.softmax(x, dim=1)
     
 class GCN(torch.nn.Module):
-    def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True):
+    def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
         super().__init__()
         if use_embedding:
             self.embedding = torch.nn.Embedding(dataset.num_node_features, hidden_channels)
-            self.conv1 = GCNConv(hidden_channels, hidden_channels)
+            self.conv1 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
         else:
-            self.conv1 = GCNConv(dataset.num_node_features, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.conv3 = GCNConv(hidden_channels, dataset.num_classes)
+            self.conv1 = GCNConv(dataset.num_node_features, hidden_channels, normalize=normalize)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv3 = GCNConv(hidden_channels, dataset.num_classes, normalize=normalize)
         self.dropout = dropout
     
     def forward(self, data):
@@ -190,11 +189,12 @@ if __name__ == '__main__':
     hidden_channels = 128 #256
     dropout = 0.1
     embed = False
-    model = GCN(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed).to(device)
-    lr = 0.01
+    normalize = True
+    model = GCN(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed, normalize=normalize).to(device)
+    lr = 0.001
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    wandb.init(project='TwitterGraph', name=f"{model.__class__.__name__} lr={lr} dim={hidden_channels} p={dropout} embed={embed}")
+    wandb.init(project='TwitterGraph', name=f"{model.__class__.__name__} lr={lr} dim={hidden_channels} p={dropout} embed={embed}, norm={normalize}")
     wandb.watch(model)
 
     for epoch in trange(1, 101):
