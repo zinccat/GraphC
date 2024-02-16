@@ -2,7 +2,7 @@ from torch_geometric.datasets import TUDataset
 from torch_geometric.loader import DataLoader
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool, NNConv, GATConv, SAGEConv
+from torch_geometric.nn import GCNConv, global_mean_pool, NNConv, GATConv, SAGEConv, GINConv, global_max_pool, global_add_pool
 from tqdm import tqdm, trange
 from torcheval.metrics.aggregation.auc import AUC
 import wandb
@@ -36,8 +36,13 @@ class GNN(torch.nn.Module):
         )
         self.conv1 = NNConv(hidden_channels, hidden_channels, self.lin1, aggr='mean')
         self.conv2 = NNConv(hidden_channels, hidden_channels, self.lin2, aggr='mean')
-        self.conv3 = NNConv(hidden_channels, dataset.num_classes, self.lin3, aggr='mean')
+        self.conv3 = NNConv(hidden_channels, hidden_channels, self.lin3, aggr='mean')
         self.embedding = torch.nn.Embedding(dataset.num_node_features, hidden_channels)
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
     
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
@@ -54,9 +59,9 @@ class GNN(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, training=self.training, p=0.1)
         x = self.conv3(x, edge_index, edge_attr)
-        # aggregate the node features
-        x = global_mean_pool(x, batch)
-        return F.softmax(x, dim=1)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
     
 class GAT(torch.nn.Module):
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
@@ -70,8 +75,13 @@ class GAT(torch.nn.Module):
         else:
             self.conv1 = GATConv(dataset.num_node_features, hidden_channels, normalize=normalize)
         self.conv2 = GATConv(hidden_channels, hidden_channels, normalize=normalize)
-        self.conv3 = GATConv(hidden_channels, dataset.num_classes, normalize=normalize)
+        self.conv3 = GATConv(hidden_channels, hidden_channels, normalize=normalize)
         self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
     
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
@@ -85,8 +95,9 @@ class GAT(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, training=self.training, p=self.dropout)
         x = self.conv3(x, edge_index, edge_attr)
-        x = global_mean_pool(x, batch)
-        return F.softmax(x, dim=1)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
     
 class GAT_layer2(torch.nn.Module):
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
@@ -96,8 +107,13 @@ class GAT_layer2(torch.nn.Module):
             self.conv1 = GATConv(hidden_channels, hidden_channels, normalize=normalize)
         else:
             self.conv1 = GATConv(dataset.num_node_features, hidden_channels, normalize=normalize)
-        self.conv2 = GATConv(hidden_channels, dataset.num_classes, normalize=normalize)
+        self.conv2 = GATConv(hidden_channels, hidden_channels, normalize=normalize)
         self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
     
     def forward(self, data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
@@ -108,8 +124,9 @@ class GAT_layer2(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, training=self.training, p=self.dropout)
         x = self.conv2(x, edge_index, edge_attr)
-        x = global_mean_pool(x, batch)
-        return F.softmax(x, dim=1)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
     
 class GCN(torch.nn.Module):
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
@@ -124,8 +141,13 @@ class GCN(torch.nn.Module):
         else:
             self.conv1 = GCNConv(dataset.num_node_features, hidden_channels, normalize=normalize)
         self.conv2 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
-        self.conv3 = GCNConv(hidden_channels, dataset.num_classes, normalize=normalize)
+        self.conv3 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
         self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
     
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
@@ -139,8 +161,148 @@ class GCN(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, training=self.training, p=self.dropout)
         x = self.conv3(x, edge_index, edge_weight=data.edge_attr)
-        x = global_mean_pool(x, batch)
-        return F.softmax(x, dim=1)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
+    
+class GCN_l4(torch.nn.Module):
+    def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
+        super().__init__()
+        embed_dim = 50
+        if use_embedding:
+            self.embedding = torch.nn.Embedding(dataset.num_node_features, embed_dim)
+            self.conv1 = GCNConv(embed_dim, hidden_channels, normalize=normalize)
+            embed = load_embeddings()
+            self.embedding.weight.data.copy_(torch.from_numpy(embed))
+            # self.embedding.weight.requires_grad = False
+        else:
+            self.conv1 = GCNConv(dataset.num_node_features, hidden_channels, normalize=normalize)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv3 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv4 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
+    
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        if hasattr(self, 'embedding'):
+            x = x.argmax(dim=1)
+            x = self.embedding(x)
+        x = self.conv1(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv2(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv3(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv4(x, edge_index, edge_weight=data.edge_attr)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
+    
+class GCN_l5(torch.nn.Module):
+    def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
+        super().__init__()
+        embed_dim = 50
+        if use_embedding:
+            self.embedding = torch.nn.Embedding(dataset.num_node_features, embed_dim)
+            self.conv1 = GCNConv(embed_dim, hidden_channels, normalize=normalize)
+            embed = load_embeddings()
+            self.embedding.weight.data.copy_(torch.from_numpy(embed))
+            # self.embedding.weight.requires_grad = False
+        else:
+            self.conv1 = GCNConv(dataset.num_node_features, hidden_channels, normalize=normalize)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv3 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv4 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.conv5 = GCNConv(hidden_channels, hidden_channels, normalize=normalize)
+        self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
+    
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        if hasattr(self, 'embedding'):
+            x = x.argmax(dim=1)
+            x = self.embedding(x)
+        x = self.conv1(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv2(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv3(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv4(x, edge_index, edge_weight=data.edge_attr)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv5(x, edge_index, edge_weight=data.edge_attr)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
+    
+class GIN(torch.nn.Module):
+    def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
+        super().__init__()
+        embed_dim = 50
+        if use_embedding:
+            self.embedding = torch.nn.Embedding(dataset.num_node_features, embed_dim)
+            self.conv1 = GINConv(torch.nn.Sequential(
+        torch.nn.Linear(embed_dim, hidden_channels),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_channels, hidden_channels)
+            ))
+            embed = load_embeddings()
+            self.embedding.weight.data.copy_(torch.from_numpy(embed))
+            # self.embedding.weight.requires_grad = False
+        else:
+            self.conv1 = GINConv(torch.nn.Sequential(
+                torch.nn.Linear(dataset.num_node_features, hidden_channels),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_channels, hidden_channels)
+            ))
+        self.conv2 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, hidden_channels)
+        ))
+        self.conv3 = GINConv(torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, hidden_channels)
+        ))
+        self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        if hasattr(self, 'embedding'):
+            x = x.argmax(dim=1)
+            x = self.embedding(x)
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training, p=self.dropout)
+        x = self.conv3(x, edge_index)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
     
 class SAGE(torch.nn.Module):
     def __init__(self, hidden_channels=16, dropout=0.5, use_embedding=True, normalize=True):
@@ -151,8 +313,13 @@ class SAGE(torch.nn.Module):
         else:
             self.conv1 = SAGEConv(dataset.num_node_features, hidden_channels, normalize=normalize)
         self.conv2 = SAGEConv(hidden_channels, hidden_channels, normalize=normalize)
-        self.conv3 = SAGEConv(hidden_channels, dataset.num_classes, normalize=normalize)
+        self.conv3 = SAGEConv(hidden_channels, hidden_channels, normalize=normalize)
         self.dropout = dropout
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_channels, dataset.num_classes)
+        )
     
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
@@ -166,8 +333,9 @@ class SAGE(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, training=self.training, p=self.dropout)
         x = self.conv3(x, edge_index)
-        x = global_mean_pool(x, batch)
-        return F.softmax(x, dim=1)
+        x = global_add_pool(x, batch)
+        x = self.mlp(x)
+        return x
 
 def evaluate(loader):
     model.eval()
@@ -221,15 +389,15 @@ if __name__ == '__main__':
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
-    hidden_channels = 64 #256
+    hidden_channels = 32 #64 #256
     dropout = 0.1
-    embed = True
+    embed = False #True
     normalize = True
-    model = GAT(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed, normalize=normalize).to(device)
+    model = GIN(hidden_channels=hidden_channels, dropout=dropout, use_embedding=embed, normalize=normalize).to(device)
     lr = 0.003
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    wandb.init(project='TwitterGraph', name=f"{model.__class__.__name__}_glove lr={lr} dim={hidden_channels} p={dropout} embed={embed}, norm={normalize}")
+    wandb.init(project='TwitterG', name=f"{model.__class__.__name__} lr={lr} dim={hidden_channels} p={dropout} embed={embed}, norm={normalize}")
     wandb.watch(model)
 
     for epoch in trange(1, 101):
